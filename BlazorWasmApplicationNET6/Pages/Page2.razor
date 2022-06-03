@@ -1,0 +1,45 @@
+﻿@page "/page2"
+
+<h1>Page 2</h1>
+<p>
+    This is the same page as <AnchorLink href="page1">Page #1</AnchorLink>, but using our <code>AnchorLink</code>
+    component, which will make your anchor links work properly.
+</p>
+
+<h2 id="toc">Table of Contents</h2>
+
+<ul>
+    <li><AnchorLink href="#toc">Table of Contents</AnchorLink></li>
+    <li><AnchorLink href="#chapter1">Chapter 1</AnchorLink></li>
+    <li><AnchorLink href="#chapter2">Chapter 2</AnchorLink></li>
+    <li><AnchorLink href="#chapter3">Chapter 3</AnchorLink></li>
+    <li><AnchorLink href="#chapter4">Chapter 4</AnchorLink></li>
+</ul>
+
+
+<h2 id="chapter1">Chapter 1</h2>
+<AnchorLink href="#chapter2">Next chapter</AnchorLink>
+<p style="margin-bottom: 120px;">
+    A paragraph with a huge bottom margin to make the page scroll.
+</p>
+
+
+<h2 id="chapter2">Chapter 2</h2>
+<AnchorLink href="#chapter3">Next chapter</AnchorLink>
+<p style="margin-bottom: 120px;">
+    A paragraph with a huge bottom margin to make the page scroll.
+</p>
+
+
+<h2 id="chapter3">Chapter 3</h2>
+<AnchorLink href="#chapter4">Next chapter</AnchorLink>
+<p style="margin-bottom: 120px;">
+    A paragraph with a huge bottom margin to make the page scroll.
+</p>
+
+
+<h2 id="chapter4">Chapter 4</h2>
+<AnchorLink href="#chapter1">First chapter</AnchorLink>
+<p style="margin-bottom: 1200px;">
+    A paragraph with a huge bottom margin to make the page scroll.
+</p>
