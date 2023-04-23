@@ -1,11 +1,38 @@
-﻿@code {
+﻿@using System.Globalization;
+@implements IAsyncDisposable
+@code {
+    private const string DefaultActiveClass = "active";
+    readonly Lazy<Task<IJSObjectReference>> ModuleTask;
     public AnchorLink()
     {
-        this.Attributes = new Dictionary<string, object>();
+        Attributes = new Dictionary<string, object>();
+        ModuleTask = new Lazy<Task<IJSObjectReference>>(() => GetJSObjectReference());
     }
 
-    private string targetId = null;
-    private bool preventDefault = false;
+    private string HrefAbsolute;
+    private string TargetId = null;
+    private bool PreventDefault = false;
+    private bool IsActive;
+    private string CssClassBk = "";
+    private string CssClass { get; set; } = "";
+
+    [Inject] IJSRuntime JSRuntime { get; set; }
+    [Inject] private NavigationManager NavigationManager { get; set; } = default!;
+    /// <summary>
+    /// Gets or sets a value representing the URL matching behavior.
+    /// </summary>
+    [Parameter] public NavLinkMatch Match { get; set; }
+
+    /// <summary>
+    /// Gets or sets the CSS class name applied to the NavLink when the
+    /// current route matches the NavLink href.
+    /// </summary>
+    [Parameter]
+    public string ActiveClass { get; set; }
+
+    private Task<IJSObjectReference> GetJSObjectReference() =>
+        JSRuntime.InvokeAsync<IJSObjectReference>(
+            "import", $"./_content/{typeof(AnchorLink).Assembly.GetName().Name}/js/AnchorLink.js").AsTask();
 
     /// <summary>
     /// This parameter supports arbitrary attributes.
@@ -26,41 +53,166 @@
     [Parameter]
     public RenderFragment ChildContent { get; set; }
 
-    [Inject]
-    protected IJSRuntime JsInterop { get; set; }
-
+    protected override void OnInitialized()
+    {
+        // We'll consider re-rendering on each location change
+        NavigationManager.LocationChanged += OnLocationChanged;
+    }
 
     protected override void OnParametersSet()
     {
-        string href = null;
-        if(this.Attributes.ContainsKey("href"))
-        {
-            // If the href attribute has been specified, we examine the value of it. If if starts with '#'
-            // we assume the rest of the value contains the ID of the element the link points to.
-            href = $"{this.Attributes["href"]}";
-            if(href.StartsWith("#"))
-            {
-                // If the href contains an anchor link we don't want the default click action to occur, but
-                // rather take care of the click in our own method.
-                this.targetId = href.Substring(1);
-                this.preventDefault = true;
-            }
-        }
+        CheckHref();
+        CheckCssClass();
+        UpdateCssClass();
         base.OnParametersSet();
     }
 
+    private void OnLocationChanged(object sender, LocationChangedEventArgs args)
+    {
+        // We could just re-render always, but for this component we know the
+        // only relevant state change is to the _isActive property.
+        var shouldBeActiveNow = ShouldMatch(args.Location);
+        if(shouldBeActiveNow != IsActive)
+        {
+            IsActive = shouldBeActiveNow;
+            UpdateCssClass();
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private bool ShouldMatch(string currentUriAbsolute)
+    {
+        if(HrefAbsolute == null)
+        {
+            return false;
+        }
+
+        if(EqualsHrefExactlyOrIfTrailingSlashAdded(currentUriAbsolute))
+        {
+            return true;
+        }
+
+        if(Match == NavLinkMatch.Prefix
+            && IsStrictlyPrefixWithSeparator(currentUriAbsolute, HrefAbsolute))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool EqualsHrefExactlyOrIfTrailingSlashAdded(string currentUriAbsolute)
+    {
+        if(string.Equals(currentUriAbsolute, HrefAbsolute, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if(currentUriAbsolute.Length == HrefAbsolute.Length - 1)
+        {
+            // Special case: highlight links to http://host/path/ even if you're
+            // at http://host/path (with no trailing slash)
+            //
+            // This is because the router accepts an absolute URI value of "same
+            // as base URI but without trailing slash" as equivalent to "base URI",
+            // which in turn is because it's common for servers to return the same page
+            // for http://host/vdir as they do for host://host/vdir/ as it's no
+            // good to display a blank page in that case.
+            if(HrefAbsolute[HrefAbsolute.Length - 1] == '/'
+                && HrefAbsolute.StartsWith(currentUriAbsolute, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsStrictlyPrefixWithSeparator(string value, string prefix)
+    {
+        var prefixLength = prefix.Length;
+        if(value.Length > prefixLength)
+        {
+            return value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                && (
+                    // Only match when there's a separator character either at the end of the
+                    // prefix or right after it.
+                    // Example: "/abc" is treated as a prefix of "/abc/def" but not "/abcdef"
+                    // Example: "/abc/" is treated as a prefix of "/abc/def" but not "/abcdef"
+                    prefixLength == 0
+                    || !char.IsLetterOrDigit(prefix[prefixLength - 1])
+                    || !char.IsLetterOrDigit(value[prefixLength])
+                );
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    private void CheckHref()
+    {
+        // Update computed state
+        string href = (string)null;
+        if(Attributes != null && Attributes.TryGetValue("href", out var obj))
+        {
+            href = Convert.ToString(obj, CultureInfo.InvariantCulture);
+        }
+
+        HrefAbsolute = href == null ? null : NavigationManager.ToAbsoluteUri(href).AbsoluteUri;
+        IsActive = ShouldMatch(NavigationManager.Uri);
+
+        // If the href attribute has been specified, we examine the value of it. If if starts with '#'
+        // we assume the rest of the value contains the ID of the element the link points to.
+        if(href.StartsWith("#"))
+        {
+            // If the href contains an anchor link we don't want the default click action to occur, but
+            // rather take care of the click in our own method.
+            TargetId = href.Substring(1);
+            PreventDefault = true;
+        }
+    }
+
+    private void CheckCssClass()
+    {
+        CssClassBk = (string)null;
+        if(Attributes != null && Attributes.TryGetValue("class", out var obj))
+        {
+            // Control if have class css to add is-active when click on the link
+            CssClassBk = Convert.ToString(obj, CultureInfo.InvariantCulture);
+        }
+    }
+
+    private void UpdateCssClass()
+    {
+        CssClass = IsActive ? CombineWithSpace(CssClassBk, ActiveClass ?? DefaultActiveClass) : CssClassBk;
+    }
+
+    private static string CombineWithSpace(string str1, string str2)
+        => str1 == null ? str2 : $"{str1} {str2}";
+
     private async Task AnchorOnClickAsync()
     {
-        if(!string.IsNullOrEmpty(this.targetId))
+        if(!string.IsNullOrEmpty(TargetId))
         {
             // Inject dynamically the javascript file
-            IJSObjectReference module = await JsInterop.InvokeAsync<IJSObjectReference>("import", "./js/AnchorLink.js");
+            IJSObjectReference module = await ModuleTask.Value;
             // If the target ID has been specified, we know this is an anchor link that we need to scroll
             // to, so we call the JavaScript method to take care of this for us.
-            await module.InvokeVoidAsync("anchorLink", this.targetId);
+            await module.InvokeVoidAsync("anchorLink", TargetId);
+            UpdateCssClass();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if(ModuleTask.IsValueCreated)
+        {
+            IJSObjectReference module = await ModuleTask.Value;
+            await module.DisposeAsync();
         }
     }
 
 }
 
-<a @attributes="this.Attributes" @onclick="this.AnchorOnClickAsync" @onclick:preventDefault="@this.preventDefault">@this.ChildContent</a>
+<a class="@CssClass" @attributes="this.Attributes" @onclick="this.AnchorOnClickAsync" @onclick:preventDefault="@this.PreventDefault">@this.ChildContent</a>
